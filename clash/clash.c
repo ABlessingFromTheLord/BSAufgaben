@@ -54,19 +54,38 @@ int main(int argc, char *argv[])
     execv("BSAufgaben/clash", arr);
 
     // calling waitpid with WNOHANG
-    pid_t temp;
     int status;
 
     while (1)
     {
-        while (waitpid(temp, &status, WNOHANG) != -1)
-        {
-            /* code */
+        int code = waitpid(-1, &status, WNOHANG);
+        // Error occurred in the last call
+        if(code == -1){
+            printf("Error while executing WAITPID with WNOHANG\n");
+            return -1;
+        }
+        // checking other codes
+        else if(code > 0){
+                    if(WIFEXITED(status)){
+                    printf("Exited , Status = [%d]\n", WEXITSTATUS(status));
+                }
+
+            else if(WIFSIGNALED(status)){
+                printf("The process gets the signal = [%d]\n", WTERMSIG(status)); // gets the signal number
+            }
+            // monitoring if the child process is being signaled with a stop signal
+            else if (WIFSTOPPED(status)){
+                printf("Proces sis stoppped by [%d]\n", WSTOPSIG(status));
+            }
+            // check if process is being resumed fgrom  stop state
+            else if (WIFCONTINUED(status)){
+                printf("The process is being resumed");
+            }
         }
 
-        die();
-        
+   
     }
     
+    return 0;
 
 }
