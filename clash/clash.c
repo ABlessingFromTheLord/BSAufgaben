@@ -1,8 +1,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <errno.h>
 #include<unistd.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <errno.h>
 
 
 int main(int argc, char *argv[])
@@ -35,13 +37,36 @@ int main(int argc, char *argv[])
     // command tokenization
     // how can I use multiple delimiters as options
     char *command = strtok(eingabe, " \t");
-    char *parameter = strtok(NULL, " \t");
+    char *arguments = strtok(NULL, " \t");
     printf("\nGiven command: %s", command);
-    printf("\nGiven parameters:%s", parameter);
+    printf("\nGiven parameters:%s", arguments);
 
     // starting process
+    pid_t newProcess = fork();
+    if (newProcess == -1)
+    {
+        printf("New process could not be created");
+        return -1;
+    }
     
+    char *arr[] = {arguments, NULL};
+    printf("%d\n", newProcess);
+    execv("BSAufgaben/clash", arr);
 
+    // calling waitpid with WNOHANG
+    pid_t temp;
+    int status;
 
+    while (1)
+    {
+        while (waitpid(temp, &status, WNOHANG) != -1)
+        {
+            /* code */
+        }
+
+        die();
+        
+    }
+    
 
 }
