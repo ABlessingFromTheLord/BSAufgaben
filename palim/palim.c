@@ -2,6 +2,8 @@
 #include <stdlib.h>
 #include <dirent.h>
 #include <errno.h>
+#include <pthread.h>
+#include "sem.h"
 
 struct statistics {
 	int lines;
@@ -16,7 +18,9 @@ struct statistics {
 
 // (module-)global variables
 static struct statistics stats;
-// TODO: add variables if necessary
+static SEM *semStats;
+static SEM *notifySem;
+
 
 // function declarations
 static void* processTree(void* path);
@@ -41,6 +45,8 @@ static void die(const char *msg) {
  * If all threads terminated, it frees all allocated resources and exits/returns.
  */
 
+
+
 int main(int argc, char** argv) {
 	if(argc < 4) {
 		usage();
@@ -61,7 +67,76 @@ int main(int argc, char** argv) {
 		usage();
 	}
 
-	// TODO: implement me!
+	// Datenbstrukturen initialisieren
+	semStats = semCreate(1); // since we have single access to  critical section
+	notifySem = semCreate(0); // producer-consumer pattern, we start with 0, consumer decreases, producers increases
+	if (semStats = NULL || notifySem == NULL)
+	{
+		die("semCreate");
+	}
+	
+
+	// Crawl threads erzeugen
+	pthread_t crawlThread[argc-3];
+	for (int i = 0; i < (argc-3); i++)
+	{
+		if(pthread_create(&crawlThread, NULL, &processTree, argv[i+3]) != 0){
+		die("pthread_create");
+		}
+	}
+
+	// Blocking to wait of the change in statistics
+	while (1)
+	{
+		P(notifySem);
+
+		P(semStats);	
+		// creating a deep copy of it, not only referencing it
+		struct statistics temp;
+		temp.lineHits = stats.lineHits;
+		temp.lines = stats.lines;
+		temp.fileHits = stats.fileHits;
+		temp.files = stats.files;
+		temp.dirs = stats.dirs;
+		temp.activeCrawlThreads = stats.activeGrepThreads;
+		temp.maxGrepThreads = stats.maxGrepThreads;
+		temp.activeGrepThreads = stats.activeGrepThreads;
+		V(semStats);
+
+		// printing it
+		if(printf("\r%i/%i lines, %i/%i files, %i directories, %i active threads", temp.lineHits, temp.lines, temp.fileHits, temp.files, temp.dirs, temp.activeGrepThreads) < 0)
+		{
+			die("printf");
+		}
+		// Force a write o all buffered data on the stdout stream.
+		// If EOF is returned, an error has occured.
+    	if (fflush(stdout) == EOF) die("fflush");
+
+		// getting out of the loop
+		if (temp.activeCrawlThreads == 0 && temp.activeGrepThreads == 0)
+		{
+			break;
+		}
+		
+	}
+
+	// prinmting one last time to get final stats that could have been left behind
+	if(printf("\r%i/%i lines, %i/%i files, %i directories, %i active threads", temp.lineHits, temp.lines, temp.fileHits, temp.files, temp.dirs, temp.activeGrepThreads) < 0)
+	{
+		die("printf");
+	}
+	// Force a write o all buffered data on the stdout stream.
+	// If EOF is returned, an error has occured.
+	if (fflush(stdout) == EOF) die("fflush");
+
+
+
+
+
+
+
+	// Aufräumen/ freigeben
+	
 
 	return EXIT_SUCCESS;
 }
@@ -76,7 +151,14 @@ int main(int argc, char** argv) {
  * \return Always returns NULL
  */
 static void* processTree(void* path) {
-	//TODO: implement me!
+	int pdet = pthread_detach(pthread_self);
+	if (pdet != 0)
+	{
+		die("pthread_detach");
+	}
+
+	//
+	
 	
 	return NULL;
 }
