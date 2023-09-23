@@ -4,6 +4,14 @@
 #include <errno.h>
 #include <pthread.h>
 #include "sem.h"
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <string.h>
+
+
+
+
 
 struct statistics {
 	int lines;
@@ -20,6 +28,7 @@ struct statistics {
 static struct statistics stats;
 static SEM *semStats;
 static SEM *notifySem;
+static SEM *grepThreadsSem;
 
 
 // function declarations
@@ -70,7 +79,8 @@ int main(int argc, char** argv) {
 	// Datenbstrukturen initialisieren
 	semStats = semCreate(1); // since we have single access to  critical section
 	notifySem = semCreate(0); // producer-consumer pattern, we start with 0, consumer decreases, producers increases
-	if (semStats = NULL || notifySem == NULL)
+	grepThreadsSem = semCreate(stats.maxGrepThreads);
+	if (semStats = NULL || notifySem == NULL || grepThreadsSem == NULL)
 	{
 		die("semCreate");
 	}
@@ -86,13 +96,14 @@ int main(int argc, char** argv) {
 	}
 
 	// Blocking to wait of the change in statistics
+	// creating a deep copy of it, not only referencing it
+	struct statistics temp;
+
 	while (1)
 	{
 		P(notifySem);
 
 		P(semStats);	
-		// creating a deep copy of it, not only referencing it
-		struct statistics temp;
 		temp.lineHits = stats.lineHits;
 		temp.lines = stats.lines;
 		temp.fileHits = stats.fileHits;
@@ -151,14 +162,22 @@ int main(int argc, char** argv) {
  * \return Always returns NULL
  */
 static void* processTree(void* path) {
+	// thread detaching
 	int pdet = pthread_detach(pthread_self);
 	if (pdet != 0)
 	{
 		die("pthread_detach");
 	}
 
-	//
-	
+	// updating statistics
+	P(semStats);
+	stats.activeCrawlThreads += 1;
+	V(semStats);
+	V(notifySem);
+
+
+	// Calling process dir for paths
+	processDir(path);
 	
 	return NULL;
 }
@@ -173,9 +192,53 @@ static void* processTree(void* path) {
  */
 
 static void processDir(char* path) {
-	// TODO: implement me!
+	// getting to the entries
+	DIR *currentDirectoryPointer = opendir(path);
+	errno = 0;
+	struct dirent *currentEntry = readdir(currentDirectoryPointer); // readdir is iterator function which returns current entry, if any, if not returns NULL
+	// to distinguish between a normal NULL and a critical section null, ie if only ernno is 0 then its only end of iteration otherwise 
+	// when errno != 0 but readdir is NULL, then it was a critical error inside readdir
 
+	// updating statistics
+	P(semStats);
+	stats.dirs += 1;
+	V(semStats);
+	V(notifySem);
+
+	// iterating as long as current entry isnt NULL 
+	while (currentEntry != NULL)
+	{
+		// process current entry
+		// TODO adjust iterator
+		errno = 0;
+		
+		// checking that the directory name isn't "." or ".."
+		if(strcmp(".", currentEntry->d_name) != 0 && strcmp("..", currentEntry->d_name) != 0){
+			processEntry(path, currentEntry);
+		} 
+		// resetting errno
+		errno = 0;
+		currentEntry = readdir(currentEntry);
+
+	}
+	// we get outside while loop only when readdir returns null
+	// we check if this is a critical error
+	if (errno != 0)
+	{
+		die("readdir");
+	}
+	
+	// closing the directory
+	if(closedir(currentDirectoryPointer) == -1){
+		die("closedir");
+	}
+	
 }
+
+
+
+
+
 
 /**
  * \brief Spawns a new grep-Thread if the entry is a regular file and calls processDir() if the entry
@@ -188,9 +251,58 @@ static void processDir(char* path) {
  * \param entry Pointer to struct dirent as returned by readdir() of the entry
  */
 static void processEntry(char* path, struct dirent* entry) {
-	//TODO: implement me!
+	// we deep copy the path because the path is modified 
+	//get length of the new string
+    int entryPathLength = strlen(path) + strlen(entry->d_name) + 2; // +2 to specify the length of the string
+    
+    //malloc and check for error during malloc
+    char* entryPath = malloc(entryPathLength);
+    if(entryPath == NULL) die("malloc");
+
+    //snprintf takes in the destination, length, format string (like in print f)  and the arguments
+    snprintf(entryPath, entryPathLength, "%s/%s", path, entry->d_name); // concat string and copy them into entrypath
+
+
+	struct stat buf;
+	// getting meta information of the current path
+	if (lstat("path", &buf) == -1)
+	{
+		// couldn't open current entry
+		free(entryPath);
+		return 0;
+	}
+	// checking if it is a directory
+	if (S_ISDIR(buf.st_mode))
+	{
+		// recursively call process dir since it is a directory
+		processDir(entryPath);
+	}
+	else if (S_ISREG(buf.st_mode))
+	{
+		// is a regular file
+		// Updating statistics
+		P(semStats);
+		stats.files += 1;
+		V(semStats);
+		V(notifySem);
+
+		// creating as new grab threads
+		P(grepThreadsSem); // claim the resource since we have a limited space
+		pthread_t grepThread;
+		if(pthread_create(grepThread, NULL, processFile, entryPath) != 0){
+			die("pthread_create");
+		}
+
+
+	}
 
 }
+
+
+
+
+
+
 
 /**
  * \brief Acts as start_routine for grep-Threads and searches all lines of the file for the
